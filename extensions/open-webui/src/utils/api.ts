@@ -3,10 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 // Interfaces
-export interface Preferences {
-  serverUrl: string;
-  apiKey: string;
-}
+// Interfaces
 
 export interface Model {
   id: string;
@@ -119,7 +116,13 @@ export const api = {
     }
 
     const data = (await response.json()) as ChatCompletionResponse;
-    const choice = data.choices[0];
+    const choices = data.choices;
+
+    if (!choices || choices.length === 0) {
+      throw new Error("No response choices returned from API");
+    }
+
+    const choice = choices[0];
     const thinking =
       choice.message.reasoning_content || choice.message.thinking;
 

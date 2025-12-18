@@ -38,6 +38,8 @@ export default function Chat() {
       try {
         setIsLoading(true);
 
+        let currentModel = ""; // Track locally to avoid stale state closure
+
         const saved = await LocalStorage.getItem<string>(STORAGE_KEY);
         if (saved) {
           try {
@@ -46,7 +48,10 @@ export default function Chat() {
               setMessages(parsed.messages);
               messagesRef.current = parsed.messages;
             }
-            if (parsed.model) setSelectedModel(parsed.model);
+            if (parsed.model) {
+              setSelectedModel(parsed.model);
+              currentModel = parsed.model;
+            }
             if (parsed.reasoning) setReasoningLevel(parsed.reasoning);
           } catch (e) {
             console.error("Parse error:", e);
@@ -55,7 +60,9 @@ export default function Chat() {
 
         const fetchedModels = await api.getModels();
         setModels(fetchedModels);
-        if (fetchedModels.length > 0 && !selectedModel) {
+
+        // Only set default if we haven't loaded one and have models available
+        if (!currentModel && fetchedModels.length > 0) {
           setSelectedModel(fetchedModels[0].id);
         }
       } catch (error) {
