@@ -1,36 +1,46 @@
 import {
   Action,
   ActionPanel,
-  List,
+  Detail,
+  Form,
   Icon,
   LocalStorage,
   showToast,
   Toast,
+  useNavigation,
 } from "@raycast/api";
-import { useState, useEffect, useRef } from "react";
-import { api, Model, ChatMessage } from "./utils/api";
+import { useEffect, useRef, useState } from "react";
+import { api, ChatMessage, Model } from "./utils/api";
 
-const STORAGE_KEY = "open-webui-conversation";
+const STORAGE_KEY = "open-webui-chat-state";
 
-interface StoredMessage extends ChatMessage {
-  id: string;
-  timestamp: number;
-  isLoading?: boolean;
+interface ChatProps {
+  launchContext?: {
+    chatId?: string;
+  };
 }
 
-export default function Chat() {
-  const [inputText, setInputText] = useState("");
+export default function Chat(props: ChatProps) {
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
-  const [messages, setMessages] = useState<StoredMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [reasoningLevel, setReasoningLevel] = useState<string>("none");
-  const messagesRef = useRef<StoredMessage[]>([]);
+  const [chatId, setChatId] = useState<string | undefined>(
+    props.launchContext?.chatId,
+  );
 
-  // Keep ref in sync
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const chatIdRef = useRef<string | undefined>(props.launchContext?.chatId);
+
+  // Keep refs in sync
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    chatIdRef.current = chatId;
+  }, [chatId]);
 
   // Load on mount
   useEffect(() => {
@@ -38,32 +48,50 @@ export default function Chat() {
       try {
         setIsLoading(true);
 
-        let currentModel = ""; // Track locally to avoid stale state closure
-
-        const saved = await LocalStorage.getItem<string>(STORAGE_KEY);
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved);
-            if (parsed.messages) {
-              setMessages(parsed.messages);
-              messagesRef.current = parsed.messages;
-            }
-            if (parsed.model) {
-              setSelectedModel(parsed.model);
-              currentModel = parsed.model;
-            }
-            if (parsed.reasoning) setReasoningLevel(parsed.reasoning);
-          } catch (e) {
-            console.error("Parse error:", e);
-          }
-        }
-
         const fetchedModels = await api.getModels();
         setModels(fetchedModels);
 
-        // Only set default if we haven't loaded one and have models available
-        if (!currentModel && fetchedModels.length > 0) {
-          setSelectedModel(fetchedModels[0].id);
+        // If we have a chatId, load that chat from API
+        if (props.launchContext?.chatId) {
+          const fullChat = await api.getChat(props.launchContext.chatId);
+          if (fullChat && fullChat.chat) {
+            const history = fullChat.chat.messages || [];
+            setMessages(history);
+            messagesRef.current = history;
+
+            if (fullChat.chat.models && fullChat.chat.models.length > 0) {
+              setSelectedModel(fullChat.chat.models[0]);
+            } else if (fetchedModels.length > 0) {
+              setSelectedModel(fetchedModels[0].id);
+            }
+          }
+        }
+        // Otherwise try to load local state if it's a fresh session but not a specific chat launch
+        else {
+          const saved = await LocalStorage.getItem<string>(STORAGE_KEY);
+          let restoredModel = "";
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              // Only restore if we are not forcing a specific chat
+              if (parsed.messages) {
+                setMessages(parsed.messages);
+                messagesRef.current = parsed.messages;
+              }
+              if (parsed.model) {
+                setSelectedModel(parsed.model);
+                restoredModel = parsed.model;
+              }
+              if (parsed.reasoning) setReasoningLevel(parsed.reasoning);
+            } catch (e) {
+              console.error("Parse error:", e);
+            }
+          }
+
+          // Set default model if not restored
+          if (!restoredModel && fetchedModels.length > 0) {
+            setSelectedModel(fetchedModels[0].id);
+          }
         }
       } catch (error) {
         showToast({
@@ -76,250 +104,181 @@ export default function Chat() {
       }
     }
     init();
-  }, []);
+  }, [props.launchContext?.chatId]);
 
-  // Save
+  // Save local state for resilience
   useEffect(() => {
-    if (messages.length > 0) {
-      LocalStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          messages,
-          model: selectedModel,
-          reasoning: reasoningLevel,
-        }),
-      );
-    }
+    LocalStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        messages,
+        model: selectedModel,
+        reasoning: reasoningLevel,
+      }),
+    );
   }, [messages, selectedModel, reasoningLevel]);
 
-  async function sendMessage() {
-    const text = inputText.trim();
-    if (!text) return;
-    if (!selectedModel) {
-      showToast({ style: Toast.Style.Failure, title: "Select a model first" });
-      return;
-    }
-
-    const currentMessages = messagesRef.current;
-
-    const userMessage: StoredMessage = {
-      id: `user-${Date.now()}`,
-      role: "user",
-      content: text,
-      timestamp: Date.now(),
-    };
-
-    const loadingMessage: StoredMessage = {
-      id: `loading-${Date.now()}`,
-      role: "assistant",
-      content: "Thinking...",
-      timestamp: Date.now(),
-      isLoading: true,
-    };
-
-    const newMessages = [...currentMessages, userMessage, loadingMessage];
-    setMessages(newMessages);
-    messagesRef.current = newMessages;
-    setInputText("");
-    setIsLoading(true);
-
-    try {
-      const history = [...currentMessages, userMessage].map(
-        ({ role, content }) => ({ role, content }),
-      );
-
-      showToast({
-        style: Toast.Style.Animated,
-        title: "Waiting for response...",
-      });
-
-      const result = await api.chatCompletion(
-        history,
-        selectedModel,
-        undefined,
-        reasoningLevel !== "none" ? reasoningLevel : undefined,
-      );
-
-      const assistantMessage: StoredMessage = {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        content: result.thinking
-          ? `💭 **Thinking:**\n\n${result.thinking}\n\n---\n\n${result.content}`
-          : result.content,
-        timestamp: Date.now(),
-      };
-
-      const finalMessages = [...currentMessages, userMessage, assistantMessage];
-      setMessages(finalMessages);
-      messagesRef.current = finalMessages;
-
-      // Save to Open WebUI so it appears in the web interface
-      try {
-        await api.saveChat(
-          finalMessages.map((m) => ({ role: m.role, content: m.content })),
-          selectedModel,
-        );
-      } catch (e) {
-        console.log("Could not save to Open WebUI:", e);
-      }
-
-      showToast({ style: Toast.Style.Success, title: "Response received" });
-    } catch (error) {
-      console.error("Error:", error);
-      const errorMessages = [...currentMessages, userMessage];
-      setMessages(errorMessages);
-      messagesRef.current = errorMessages;
-      showToast({
-        style: Toast.Style.Failure,
-        title: "Error",
-        message: String(error),
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  async function clearChat() {
-    setMessages([]);
-    messagesRef.current = [];
-    await LocalStorage.removeItem(STORAGE_KEY);
-    showToast({ style: Toast.Style.Success, title: "Chat cleared" });
-  }
-
-  const reasoningOptions = [
-    { value: "none", title: "No Reasoning" },
-    { value: "low", title: "Low" },
-    { value: "medium", title: "Medium" },
-    { value: "high", title: "High" },
-  ];
+  const markdown =
+    messages.length === 0
+      ? `## Open WebUI Chat\n\nType below to start chatting with **${selectedModel || "AI"}**`
+      : messages
+          .map((msg) => {
+            const icon = msg.role === "user" ? "👤" : "🤖";
+            const name = msg.role === "user" ? "You" : selectedModel;
+            const thinkingBlock = msg.thinking
+              ? `> **Thinking**\n> ${msg.thinking.replace(/\n/g, "\n> ")}\n\n---\n\n`
+              : "";
+            return `### ${icon} ${name}\n\n${thinkingBlock}${msg.content}\n\n---`;
+          })
+          .join("\n");
 
   return (
-    <List
+    <Detail
+      markdown={markdown}
       isLoading={isLoading}
-      searchText={inputText}
-      onSearchTextChange={setInputText}
-      searchBarPlaceholder="Type a message and press Enter..."
-      filtering={false}
-      isShowingDetail={messages.length > 0}
-      searchBarAccessory={
-        <List.Dropdown
-          tooltip="Select Model"
-          value={selectedModel}
-          onChange={setSelectedModel}
-        >
-          <List.Dropdown.Section title="Models">
-            {models.map((m) => (
-              <List.Dropdown.Item key={m.id} value={m.id} title={m.name} />
-            ))}
-          </List.Dropdown.Section>
-        </List.Dropdown>
-      }
-    >
-      {messages.length === 0 ? (
-        <List.EmptyView
-          icon={Icon.Message}
-          title="Start chatting"
-          description="Type a message above and press Enter"
-          actions={
-            <ActionPanel>
-              <Action
-                title="Send"
-                icon={Icon.Envelope}
-                onAction={sendMessage}
-              />
+      actions={
+        <ActionPanel>
+          <ActionPanel.Section title="Actions">
+            <Action.Push
+              title="Send Message"
+              icon={Icon.Bubble}
+              target={
+                <MessageForm
+                  parentSendMessage={async (text) => {
+                    const userMsg: ChatMessage = {
+                      role: "user",
+                      content: text,
+                    };
+                    const newMessages = [...messagesRef.current, userMsg];
+                    setMessages(newMessages);
+                    setIsLoading(true);
+                    showToast({
+                      style: Toast.Style.Animated,
+                      title: "Sending message...",
+                    });
+
+                    try {
+                      const response = await api.chatCompletion(
+                        newMessages,
+                        selectedModel,
+                        reasoningLevel !== "none" ? reasoningLevel : undefined,
+                      );
+
+                      const assistantMsg: ChatMessage = {
+                        role: "assistant",
+                        content: response.content,
+                        thinking: response.thinking,
+                      };
+
+                      const finalMessages = [...newMessages, assistantMsg];
+                      setMessages(finalMessages);
+                      showToast({
+                        style: Toast.Style.Success,
+                        title: "Response received",
+                      });
+
+                      try {
+                        const result = await api.saveChat(
+                          chatIdRef.current,
+                          finalMessages,
+                          selectedModel,
+                          reasoningLevel !== "none"
+                            ? reasoningLevel
+                            : undefined,
+                        );
+                        if (result && result.id) setChatId(result.id);
+                      } catch (e) {
+                        console.error(e);
+                      }
+                    } catch (e) {
+                      showToast({
+                        style: Toast.Style.Failure,
+                        title: "Error",
+                        message: String(e),
+                      });
+                    } finally {
+                      setIsLoading(false);
+                    }
+                  }}
+                />
+              }
+            />
+          </ActionPanel.Section>
+
+          <ActionPanel.Section title="Settings">
+            <ActionPanel.Submenu title="Select Model" icon={Icon.ComputerChip}>
+              {models.map((m) => (
+                <Action
+                  key={m.id}
+                  title={m.name}
+                  onAction={() => setSelectedModel(m.id)}
+                  icon={selectedModel === m.id ? Icon.CheckCircle : Icon.Circle}
+                />
+              ))}
+            </ActionPanel.Submenu>
+
+            {selectedModel.toLowerCase().includes("r1") ||
+            selectedModel.toLowerCase().includes("reasoning") ||
+            selectedModel.toLowerCase().includes("thinking") ||
+            reasoningLevel !== "none" ? (
               <ActionPanel.Submenu
                 title="Reasoning Level"
                 icon={Icon.LightBulb}
               >
-                {reasoningOptions.map((opt) => (
+                {["none", "low", "medium", "high"].map((level) => (
                   <Action
-                    key={opt.value}
-                    title={opt.title}
+                    key={level}
+                    title={level.charAt(0).toUpperCase() + level.slice(1)}
+                    onAction={() => setReasoningLevel(level)}
                     icon={
-                      reasoningLevel === opt.value ? Icon.Checkmark : undefined
+                      reasoningLevel === level ? Icon.CheckCircle : Icon.Circle
                     }
-                    onAction={() => setReasoningLevel(opt.value)}
                   />
                 ))}
               </ActionPanel.Submenu>
-            </ActionPanel>
-          }
-        />
-      ) : (
-        messages.map((msg) => (
-          <List.Item
-            key={msg.id}
-            icon={
-              msg.role === "user"
-                ? Icon.Person
-                : msg.isLoading
-                  ? Icon.Clock
-                  : Icon.Message
-            }
-            title={
-              msg.role === "user" ? "You" : msg.isLoading ? "Thinking..." : "AI"
-            }
-            subtitle={
-              msg.content.substring(0, 60) +
-              (msg.content.length > 60 ? "..." : "")
-            }
-            detail={
-              <List.Item.Detail
-                markdown={msg.content}
-                metadata={
-                  <List.Item.Detail.Metadata>
-                    <List.Item.Detail.Metadata.Label
-                      title="Time"
-                      text={new Date(msg.timestamp).toLocaleTimeString()}
-                    />
-                    <List.Item.Detail.Metadata.Label
-                      title="Role"
-                      text={msg.role === "user" ? "You" : "AI"}
-                    />
-                  </List.Item.Detail.Metadata>
-                }
-              />
-            }
-            actions={
-              <ActionPanel>
-                <Action
-                  title="Send"
-                  icon={Icon.Envelope}
-                  onAction={sendMessage}
-                />
-                <Action.CopyToClipboard
-                  title="Copy Message"
-                  content={msg.content}
-                />
-                <ActionPanel.Submenu
-                  title={`Reasoning: ${reasoningLevel}`}
-                  icon={Icon.LightBulb}
-                >
-                  {reasoningOptions.map((opt) => (
-                    <Action
-                      key={opt.value}
-                      title={opt.title}
-                      icon={
-                        reasoningLevel === opt.value
-                          ? Icon.Checkmark
-                          : undefined
-                      }
-                      onAction={() => setReasoningLevel(opt.value)}
-                    />
-                  ))}
-                </ActionPanel.Submenu>
-                <Action
-                  title="Clear Chat"
-                  icon={Icon.Trash}
-                  style={Action.Style.Destructive}
-                  shortcut={{ modifiers: ["cmd", "shift"], key: "backspace" }}
-                  onAction={clearChat}
-                />
-              </ActionPanel>
-            }
+            ) : null}
+          </ActionPanel.Section>
+        </ActionPanel>
+      }
+      metadata={
+        <Detail.Metadata>
+          <Detail.Metadata.Label title="Model" text={selectedModel} />
+          <Detail.Metadata.Label
+            title="Messages"
+            text={messages.length.toString()}
           />
-        ))
-      )}
-    </List>
+        </Detail.Metadata>
+      }
+    />
+  );
+}
+
+function MessageForm({
+  parentSendMessage,
+}: {
+  parentSendMessage: (t: string) => Promise<void>;
+}) {
+  const { pop } = useNavigation();
+  return (
+    <Form
+      actions={
+        <ActionPanel>
+          <Action.SubmitForm
+            title="Send"
+            onSubmit={(values) => {
+              pop();
+              parentSendMessage(values.message);
+            }}
+          />
+        </ActionPanel>
+      }
+    >
+      <Form.TextArea
+        id="message"
+        title="Message"
+        placeholder="Type here..."
+        autoFocus
+      />
+    </Form>
   );
 }

@@ -23,20 +23,13 @@
             "title": "New Chat",
             "subtitle": "Open WebUI",
             "description": "Start a new conversation",
-            "mode": "view"
+            "mode": "no-view"
         },
         {
-            "name": "upload-file",
-            "title": "Upload File",
+            "name": "search-chats",
+            "title": "Search Chats",
             "subtitle": "Open WebUI",
-            "description": "Upload a file for RAG",
-            "mode": "view"
-        },
-        {
-            "name": "browse-files",
-            "title": "Browse Files",
-            "subtitle": "Open WebUI",
-            "description": "View uploaded files and collections",
+            "description": "Search and resume past conversations",
             "mode": "view"
         }
     ],

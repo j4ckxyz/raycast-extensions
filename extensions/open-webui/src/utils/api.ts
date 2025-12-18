@@ -1,8 +1,5 @@
 import { getPreferenceValues } from "@raycast/api";
-import * as fs from "fs";
-import * as path from "path";
 
-// Interfaces
 // Interfaces
 
 export interface Model {
@@ -14,24 +11,16 @@ export interface Model {
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
+  id?: string;
+  timestamp?: number;
   thinking?: string;
 }
 
-export interface FileReference {
-  type: "file" | "collection";
+export interface Chat {
   id: string;
-  name?: string;
-}
-
-export interface UploadedFile {
-  id: string;
-  filename: string;
-  created_at: string;
-  meta?: {
-    name?: string;
-    content_type?: string;
-    size?: number;
-  };
+  title: string;
+  updated_at: number;
+  models?: string[];
 }
 
 export interface ChatCompletionChoice {
@@ -77,10 +66,101 @@ export const api = {
     return data.data;
   },
 
+  getChats: async (): Promise<Chat[]> => {
+    const { serverUrl, apiKey } = getPreferences();
+    const response = await fetch(`${serverUrl}/api/v1/chats/`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch chats: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data as Chat[];
+  },
+
+  getChat: async (
+    id: string,
+  ): Promise<{ chat: { messages: ChatMessage[]; models: string[] } }> => {
+    const { serverUrl, apiKey } = getPreferences();
+    const response = await fetch(`${serverUrl}/api/v1/chats/${id}`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch chat: ${response.statusText}`);
+    }
+
+    return await response.json();
+  },
+
+  // Create or Update chat
+  saveChat: async (
+    chatId: string | undefined, // undefined = new chat
+    messages: ChatMessage[],
+    model: string,
+    reasoningLevel?: string,
+  ): Promise<{ id: string }> => {
+    const { serverUrl, apiKey } = getPreferences();
+    const endpoint = chatId
+      ? `${serverUrl}/api/v1/chats/${chatId}`
+      : `${serverUrl}/api/v1/chats/new`;
+
+    const body = {
+      chat: {
+        messages: messages,
+        models: [model],
+        params: reasoningLevel ? { reasoning_effort: reasoningLevel } : {},
+      },
+    };
+
+    // If updating, the payload might differ slightly depending on Open WebUI version
+    // But typically POST /chats/new returns an ID.
+    // For updates, we often just need to push the new state.
+    // NOTE: Open WebUI API for updates can be tricky.
+    // If we use /api/v1/chats/new with an existing ID in the body, it might update.
+    // But let's assume specific endpoint for now or just recreate logic.
+    // Actually, checking Open WebUI source/docs is safer.
+    // Standard Open WebUI often uses POST /api/v1/chats/new for everything (upsert with same ID).
+
+    // For now, let's use the simplest approach: Always POST to /api/v1/chats/new
+    // But if we want to update, we need to ensure we pass the same ID if possible or just use the returned ID for future calls.
+    // Wait, the user specifically asked for "one chat in extension = one chat in open webui".
+    // So we MUST maintain the ID.
+
+    // If chatId exists, we should try to update.
+    // Recent Open WebUI versions allow POST /api/v1/chats/{id} to update details.
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      // Fallback: If specific ID update failed, maybe it doesn't exist?
+      // But throwing error is better for now.
+      const text = await response.text();
+      throw new Error(`Failed to save chat: ${text}`);
+    }
+
+    const data = await response.json();
+    return { id: data.id || chatId || "" };
+  },
+
   chatCompletion: async (
     messages: ChatMessage[],
     model: string,
-    files?: FileReference[],
     reasoningLevel?: string,
   ): Promise<ChatCompletionResult> => {
     const { serverUrl, apiKey } = getPreferences();
@@ -90,11 +170,6 @@ export const api = {
       messages: messages.map(({ role, content }) => ({ role, content })),
       stream: false,
     };
-
-    // Add files for RAG
-    if (files && files.length > 0) {
-      body.files = files;
-    }
 
     // Add reasoning effort for models that support it
     if (reasoningLevel) {
@@ -130,113 +205,5 @@ export const api = {
       content: choice.message.content,
       thinking: thinking,
     };
-  },
-
-  uploadFile: async (filePath: string): Promise<UploadedFile> => {
-    const { serverUrl, apiKey } = getPreferences();
-
-    const fileBuffer = fs.readFileSync(filePath);
-    const fileName = path.basename(filePath);
-
-    // Create a boundary for multipart form data
-    const boundary = `----FormBoundary${Date.now()}`;
-    const crlf = "\r\n";
-
-    // Build the multipart body manually
-    const header = `--${boundary}${crlf}Content-Disposition: form-data; name="file"; filename="${fileName}"${crlf}Content-Type: application/octet-stream${crlf}${crlf}`;
-    const footer = `${crlf}--${boundary}--${crlf}`;
-
-    const headerBuffer = Buffer.from(header);
-    const footerBuffer = Buffer.from(footer);
-    const bodyBuffer = Buffer.concat([
-      headerBuffer,
-      fileBuffer,
-      footerBuffer,
-    ] as unknown as Uint8Array[]);
-    const body = new Uint8Array(bodyBuffer);
-
-    const response = await fetch(`${serverUrl}/api/v1/files/`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": `multipart/form-data; boundary=${boundary}`,
-      },
-      body: body,
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`File upload failed: ${errText}`);
-    }
-
-    return (await response.json()) as UploadedFile;
-  },
-
-  getFiles: async (): Promise<UploadedFile[]> => {
-    const { serverUrl, apiKey } = getPreferences();
-
-    const response = await fetch(`${serverUrl}/api/v1/files/`, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch files: ${response.statusText}`);
-    }
-
-    return (await response.json()) as UploadedFile[];
-  },
-
-  // Save chat to Open WebUI so it appears in the web interface
-  saveChat: async (
-    messages: ChatMessage[],
-    model: string,
-    title?: string,
-  ): Promise<{ id: string }> => {
-    const { serverUrl, apiKey } = getPreferences();
-
-    // Format messages for Open WebUI's chat format
-    const chatMessages = messages.map((msg, idx) => ({
-      id: `msg-${idx}`,
-      role: msg.role,
-      content: msg.content,
-      timestamp: Date.now() / 1000,
-    }));
-
-    const body = {
-      chat: {
-        title: title || messages[0]?.content.substring(0, 50) || "Raycast Chat",
-        models: [model],
-        messages: chatMessages,
-        history: {
-          messages: Object.fromEntries(
-            chatMessages.map((msg, idx) => [
-              msg.id,
-              { ...msg, parentId: idx > 0 ? chatMessages[idx - 1].id : null },
-            ]),
-          ),
-          currentId: chatMessages[chatMessages.length - 1]?.id,
-        },
-      },
-    };
-
-    const response = await fetch(`${serverUrl}/api/v1/chats/new`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("Save chat failed:", errText);
-      // Don't throw - saving to Open WebUI is optional
-      return { id: "" };
-    }
-
-    return (await response.json()) as { id: string };
   },
 };
