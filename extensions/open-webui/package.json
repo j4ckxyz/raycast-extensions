@@ -1,0 +1,91 @@
+{
+    "$schema": "https://www.raycast.com/schemas/extension.json",
+    "name": "open-webui",
+    "title": "Open WebUI",
+    "description": "Chat with your Open WebUI instance",
+    "icon": "command-icon.png",
+    "author": "jackg",
+    "categories": [
+        "Productivity",
+        "Communication"
+    ],
+    "license": "MIT",
+    "commands": [
+        {
+            "name": "chat",
+            "title": "Chat",
+            "subtitle": "Open WebUI",
+            "description": "Chat with your Open WebUI instance",
+            "mode": "view"
+        },
+        {
+            "name": "new-chat",
+            "title": "New Chat",
+            "subtitle": "Open WebUI",
+            "description": "Start a new conversation",
+            "mode": "view"
+        },
+        {
+            "name": "upload-file",
+            "title": "Upload File",
+            "subtitle": "Open WebUI",
+            "description": "Upload a file for RAG",
+            "mode": "view"
+        },
+        {
+            "name": "browse-files",
+            "title": "Browse Files",
+            "subtitle": "Open WebUI",
+            "description": "View uploaded files and collections",
+            "mode": "view"
+        }
+    ],
+    "preferences": [
+        {
+            "name": "serverUrl",
+            "type": "textfield",
+            "required": true,
+            "title": "Server URL",
+            "description": "Your Open WebUI instance URL (e.g., http://localhost:3000)",
+            "placeholder": "http://localhost:3000"
+        },
+        {
+            "name": "apiKey",
+            "type": "password",
+            "required": true,
+            "title": "API Key",
+            "description": "Your Open WebUI API Key (Bearer Token)",
+            "placeholder": "sk-..."
+        }
+    ],
+    "dependencies": {
+        "@raycast/api": "^1.79.0",
+        "@raycast/utils": "^1.16.3"
+    },
+    "devDependencies": {
+        "@types/node": "20.8.10",
+        "@types/react": "18.2.45",
+        "@types/react-dom": "18.2.18",
+        "@typescript-eslint/eslint-plugin": "^8.50.0",
+        "@typescript-eslint/parser": "^8.50.0",
+        "eslint": "^8.57.0",
+        "prettier": "^3.3.3",
+        "react": "18.2.0",
+        "typescript": "^5.4.5"
+    },
+    "scripts": {
+        "build": "ray build -e dist",
+        "dev": "ray develop",
+        "fix-lint": "ray lint --fix",
+        "lint": "ray lint",
+        "publish": "npx @raycast/api@latest publish"
+    },
+    "overrides": {
+        "@types/react": "18.2.45",
+        "@types/react-dom": "18.2.18"
+    },
+    "platforms": [
+        "macOS",
+        "Windows"
+    ]
+}
