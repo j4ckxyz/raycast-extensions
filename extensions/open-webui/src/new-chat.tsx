@@ -1,26 +1,28 @@
-import { LocalStorage, showToast, Toast, useNavigation } from "@raycast/api";
-import { useEffect } from "react";
-import Chat from "./chat";
+import {
+  launchCommand,
+  LaunchType,
+  LocalStorage,
+  showToast,
+  Toast,
+} from "@raycast/api";
 
-export default function NewChat() {
-  const { push } = useNavigation();
+const STORAGE_KEY = "open-webui-chat-state";
 
-  useEffect(() => {
-    async function reset() {
-      try {
-        await LocalStorage.clear();
-        showToast({ style: Toast.Style.Success, title: "Chat cleared" });
-        push(<Chat />);
-      } catch (error) {
-        showToast({
-          style: Toast.Style.Failure,
-          title: "Failed to clear chat",
-          message: String(error),
-        });
-      }
+export default async function Command() {
+  try {
+    await LocalStorage.removeItem(STORAGE_KEY);
+    await showToast({ style: Toast.Style.Success, title: "Chat cleared" });
+    try {
+      await launchCommand({ name: "chat", type: LaunchType.UserInitiated });
+    } catch {
+      // Ignore launch error if it's just 'background' limitations, but here it should work.
+      // Actually, launchCommand is best-effort.
     }
-    reset();
-  }, []);
-
-  return null;
+  } catch (error) {
+    await showToast({
+      style: Toast.Style.Failure,
+      title: "Failed to clear chat",
+      message: String(error),
+    });
+  }
 }

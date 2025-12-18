@@ -21,6 +21,7 @@ export interface Chat {
   title: string;
   updated_at: number;
   models?: string[];
+  tags?: string[];
 }
 
 export interface ChatCompletionChoice {
@@ -85,7 +86,14 @@ export const api = {
 
   getChat: async (
     id: string,
-  ): Promise<{ chat: { messages: ChatMessage[]; models: string[] } }> => {
+  ): Promise<{
+    chat: {
+      messages: ChatMessage[];
+      models: string[];
+      title?: string;
+      tags?: string[];
+    };
+  }> => {
     const { serverUrl, apiKey } = getPreferences();
     const response = await fetch(`${serverUrl}/api/v1/chats/${id}`, {
       headers: {
@@ -101,25 +109,68 @@ export const api = {
     return await response.json();
   },
 
+  generateTitle: async (
+    messages: ChatMessage[],
+    model: string,
+  ): Promise<string> => {
+    const promptMessages: ChatMessage[] = [
+      ...messages,
+      {
+        role: "user",
+        content:
+          "Generate a brief 3-5 word title for this conversation. Do not use quotes. Output ONLY the title.",
+      },
+    ];
+
+    try {
+      const result = await api.chatCompletion(promptMessages, model);
+      return result.content.trim().replace(/^["']|["']$/g, "");
+    } catch (error) {
+      console.error("Failed to generate title:", error);
+      return "New Chat";
+    }
+  },
+
+  getUniqueTags: async (): Promise<string[]> => {
+    try {
+      const chats = await api.getChats();
+      const tags = new Set<string>();
+      chats.forEach((chat) => {
+        if (chat.tags) {
+          chat.tags.forEach((tag) => tags.add(tag));
+        }
+      });
+      return Array.from(tags).sort();
+    } catch (e) {
+      console.error("Error fetching tags:", e);
+      return [];
+    }
+  },
+
   // Create or Update chat
   saveChat: async (
     chatId: string | undefined, // undefined = new chat
     messages: ChatMessage[],
     model: string,
     reasoningLevel?: string,
+    title?: string,
+    tags?: string[],
   ): Promise<{ id: string }> => {
     const { serverUrl, apiKey } = getPreferences();
     const endpoint = chatId
       ? `${serverUrl}/api/v1/chats/${chatId}`
       : `${serverUrl}/api/v1/chats/new`;
 
-    const body = {
+    const body: any = {
       chat: {
         messages: messages,
         models: [model],
         params: reasoningLevel ? { reasoning_effort: reasoningLevel } : {},
       },
     };
+
+    if (title) body.chat.title = title;
+    if (tags) body.chat.tags = tags;
 
     // If updating, the payload might differ slightly depending on Open WebUI version
     // But typically POST /chats/new returns an ID.
